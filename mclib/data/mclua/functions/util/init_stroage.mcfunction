@@ -1,0 +1,1 @@
+data merge storage mclua:_data {data:{_VERSION:"MCLua v0",return:0,args:[0d,0d],exec:{cmd:""},var:{}}}

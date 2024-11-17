@@ -1,1 +1,1 @@
-luaparser=3.3.0
+luaparser==3.3.0

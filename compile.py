@@ -130,9 +130,9 @@ def compileLuaBlock(ast_tree: list, outfp: str):
             with open(os.path.join(outfp,whileProgName+".mcfunction"),"w",encoding="utf-8") as f:
                 f.write(whileBody)
         elif isinstance(line, ast.Fornum):
-            whileBody = "data modify storage mclua:_data data.args set value [0d,0d]\n"
+            forBody = "data modify storage mclua:_data data.args set value [0d,0d]\n"
             var_name = line.target.id
-            value = line.start.n
+            value = line.start
             if isinstance(value, ast.Number): result += "data modify storage mclua:_data data.var."+var_name+" set value "+str(value.n)+"d\n"
             elif isinstance(value, ast.String): result += "data modify storage mclua:_data data.var."+var_name+' set value "'+value.s+'"\n'
             elif "Op" in value.display_name:
@@ -143,41 +143,35 @@ def compileLuaBlock(ast_tree: list, outfp: str):
                 if isinstance(value.right, ast.Number): result += "data modify storage mclua:_data data.args[1] set value "+str(value.right.n)+"d\n"
                 elif isinstance(value.right, ast.Name): result += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+value.right.id+"\n"
                 else: raise ValueError("vartype not supported yet")
-                
                 if isinstance(value, ast.AddOp): result += "function mclua:lib/add\n"
                 elif isinstance(value, ast.SubOp): result += "function mclua:lib/sub\n"
                 elif isinstance(value, ast.MultOp): result += "function mclua:lib/mul\n"
                 elif isinstance(value, ast.FloatDivOp): result += "function mclua:lib/div\n"
                 elif isinstance(value, ast.ModOp): result += "function mclua:lib/mod\n"
                 else: raise NotImplementedError("op lib not supported yet")
-                
                 result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
             else: raise ValueError("optype not supported yet")
-            
-            
-            
-            if isinstance(line.test.left, ast.Number): whileBody += "data modify storage mclua:_data data.args[0] set value "+str(line.test.left.n)+"d\n"
-            elif isinstance(line.test.left, ast.Name): whileBody += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+line.test.left.id+"\n"
+            forBody += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+line.target.id+"\n"
+            if isinstance(line.stop, ast.Number): forBody += "data modify storage mclua:_data data.args[1] set value "+str(line.stop.n)+"d\n"
+            elif isinstance(line.stop, ast.Name): forBody += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+line.stop.id+"\n"
             else: raise ValueError("vartype not supported yet")
-            if isinstance(line.test.right, ast.Number): whileBody += "data modify storage mclua:_data data.args[1] set value "+str(line.test.right.n)+"d\n"
-            elif isinstance(line.test.right, ast.Name): whileBody += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+line.test.right.id+"\n"
+            forBody += "function mclua:lib/gtop\n"
+            forBody += "execute if data storage mclua:_data data.return run data remove storage mclua:_data data.var."+var_name+"\n"
+            forBody += "execute if data storage mclua:_data data.return run return 0\n"
+            forBody += compileLuaBlock(line.body.body, outfp)
+            forBody += "data modify storage mclua:_data data.args set value [0d,0d]\n"
+            forBody += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+var_name+"\n"
+            if isinstance(line.step, ast.Number): forBody += "data modify storage mclua:_data data.args[1] set value "+str(line.step.n)+"d\n"
+            elif isinstance(line.step, ast.Name): forBody += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+line.step.id+"\n"
             else: raise ValueError("vartype not supported yet")
-            
-            if isinstance(line.test, ast.EqToOp): whileBody += "function mclua:lib/eqtoop\n"
-            elif isinstance(line.test, ast.NotEqToOp): whileBody += "function mclua:lib/noteqtoop\n"
-            elif isinstance(line.test, ast.GreaterThanOp): whileBody += "function mclua:lib/gtop\n"
-            elif isinstance(line.test, ast.LessThanOp): whileBody += "function mclua:lib/ltop\n"
-            elif isinstance(line.test, ast.GreaterOrEqThanOp): whileBody += "function mclua:lib/gteqop\n"
-            elif isinstance(line.test, ast.LessOrEqThanOp): whileBody += "function mclua:lib/lteqop\n"
-            else: raise NotImplementedError("test op lib not supported yet")
-            whileBody += "execute unless data storage mclua:_data data.return run return 0\n"
-            whileBody += compileLuaBlock(line.body.body, outfp)
-            whileProgName = "sub"+str(SUB_PROG_ID)
+            forBody += "function mclua:lib/add\n"
+            forBody += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+            forProgName = "sub"+str(SUB_PROG_ID)
             SUB_PROG_ID += 1
-            whileBody += "function out:"+whileProgName+"\n"
-            result += "function out:"+whileProgName+"\n"
-            with open(os.path.join(outfp,whileProgName+".mcfunction"),"w",encoding="utf-8") as f:
-                f.write(whileBody)
+            forBody += "function out:"+forProgName+"\n"
+            result += "function out:"+forProgName+"\n"
+            with open(os.path.join(outfp,forProgName+".mcfunction"),"w",encoding="utf-8") as f:
+                f.write(forBody)
         elif isinstance(line, ast.Forin): raise NotImplementedError("for in repeat not supported in minecraft")
         else: raise NotImplementedError("not supported yet")
     return result
@@ -191,4 +185,4 @@ def compileLua(fn: str,ofp: str):
     with open(os.path.join(ofp,"main.mcfunction"),"w",encoding="utf-8") as f:
         m = compileLuaBlock(ast_tree, ofp)
         f.write(m)
-compileLua("test.lua","/home/ubuntu/.local/share/atlauncher/instances/DCraftPack/saves/world123/datapacks/a/data/out/function")
+compileLua("test.lua","/home/steve/.local/share/PrismLauncher/instances/1.21/minecraft/saves/world123/datapacks/a/data/out/function")

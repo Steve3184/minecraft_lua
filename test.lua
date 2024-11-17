@@ -1,10 +1,10 @@
-print("hello minecraft")
-i = 5
-repeat
-    print(i)
-    i = i -1
-until (i==0)
-for k=0,3,1 do 
-    print(k)
+aa =1
+bb = aa
+function hello( arg1__string )
+    a = "Hello function:" + arg1
+    print(a)
+    return a
 end
+
+hello("World")
 print("prog end")

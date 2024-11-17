@@ -2,31 +2,106 @@ import luaparser as lp
 from luaparser import ast
 import os
 SUB_PROG_ID = 0
+var_type = {}
+
+func_need_args = {}
+
+def check_if_def(var_name: str):
+    if var_name in var_type:
+        return
+    else:
+        raise ValueError("var not defined: %s" % var_name)
 
 def openSrc(fn: str):
     with open(fn, 'r') as f:
         src = f.read()
     return src
 
-def compileLuaBlock(ast_tree: list, outfp: str):
-    global SUB_PROG_ID
+def parse_func_call(line: ast.Call):
+    global var_type,func_need_args
+    result = ""
+    ret_type = "none"
+    if line.func.id == "print":
+        if isinstance(line.args[0], ast.String):
+            result += 'tellraw @a [{"text":"'+line.args[0].s+'"}]\n'
+        elif isinstance(line.args[0], ast.Number):
+            result += 'tellraw @a [{"text":"'+str(line.args[0].n)+'"}]\n'
+        elif isinstance(line.args[0], ast.Name):
+            check_if_def(line.args[0].id)
+            result += 'tellraw @a [{"type":"nbt","nbt":"data.var.'+line.args[0].id+'","source":"storage","storage":"mclua:_data"}]\n'
+        else: raise ValueError("type not supported yet")
+    elif line.func.id == "command":
+        if isinstance(line.args[0], ast.String):
+            result += line.args[0].s+"\n"
+        elif isinstance(line.args[0], ast.Name):
+            check_if_def(line.args[0].id)
+            if var_type[line.args[0].id] == "string":
+                result += "data modify storage mclua:_data data.exec.cmd set from storage mclua:_data data.var."+line.args[0].id+"\n"
+                result += "function mclua:lib/execute with storage mclua:_data data.exec\n"
+            else:
+                raise ValueError("wrong var types when command call (eg. number)")
+        else: raise ValueError("type not supported yet")
+    elif line.func.id == "str":
+        if isinstance(line.args[0], ast.Name):
+            check_if_def(line.args[0].id)
+            if var_type[line.args[0].id] == "number":
+                result += f'data modify storage mclua:_data data.return set string storage mclua:_data data.var.{line.args[0].id} 0 -1\n'
+            else:
+                result += f'data modify storage mclua:_data data.return set string storage mclua:_data data.var.{line.args[0].id}\n'
+        elif isinstance(line.args[0], ast.String):
+            result += f"data modify storage mclua:_data data.return set value '{str(line.args[0].s)}'\n"
+        elif isinstance(line.args[0], ast.Number):
+            result += f"data modify storage mclua:_data data.return set value '{str(line.args[0].n)}'\n"
+        else: raise ValueError("type not supported yet")
+        ret_type = "string"
+    return result,ret_type
+
+def compileLuaBlock(ast_tree: list, outfp: str, sub_vartype={}, sub_func=False):
+    global SUB_PROG_ID,func_need_args
+    if sub_vartype == {}: global var_type
+    else: var_type = sub_vartype
     result = ""
     for line in ast_tree:
         if isinstance(line, ast.Assign):
             var_name = line.targets[0].id
             value = line.values[0]
-            if isinstance(value, ast.Number): result += "data modify storage mclua:_data data.var."+var_name+" set value "+str(value.n)+"d\n"
-            elif isinstance(value, ast.String): result += "data modify storage mclua:_data data.var."+var_name+' set value "'+value.s+'"\n'
-            elif "Op" in value.display_name:
-                result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
-                if isinstance(value.left, ast.Number): result += "data modify storage mclua:_data data.args[0] set value "+str(value.left.n)+"d\n"
-                elif isinstance(value.left, ast.Name): result += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+value.left.id+"\n"
+            if isinstance(value, ast.Number):
+                var_type[var_name] = "number"
+                result += "data modify storage mclua:_data data.var."+var_name+" set value "+str(value.n)+"d\n"
+            elif isinstance(value, ast.String):
+                var_type[var_name] = "string"
+                result += "data modify storage mclua:_data data.var."+var_name+' set value "'+value.s+'"\n'
+            elif "Op" in value.display_name and not (isinstance(value.left, ast.String) and isinstance(value.right, ast.String)):
+                str_op = False
+                if isinstance(value.left, ast.Number):
+                    result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
+                    result += "data modify storage mclua:_data data.args[0] set value "+str(value.left.n)+"d\n"
+                elif isinstance(value.left, ast.Name):
+                    check_if_def(value.left.id)
+                    if var_type[value.left.id] == "number":
+                        result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
+                        result += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+value.left.id+"\n"
+                    elif var_type[value.left.id] == "string":
+                        result += "data modify storage mclua:_data data.args set value {a:'',b:''}\n"
+                        result += "data modify storage mclua:_data data.args.a set from storage mclua:_data data.var."+value.left.id+"\n"
                 else: raise ValueError("vartype not supported yet")
-                if isinstance(value.right, ast.Number): result += "data modify storage mclua:_data data.args[1] set value "+str(value.right.n)+"d\n"
-                elif isinstance(value.right, ast.Name): result += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+value.right.id+"\n"
+                if isinstance(value.right, ast.Number):
+                    var_type[var_name] = "number"
+                    result += "data modify storage mclua:_data data.args[1] set value "+str(value.right.n)+"d\n"
+                elif isinstance(value.right, ast.Name):
+                    check_if_def(value.right.id)
+                    if var_type[value.right.id] == "number":
+                        result += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+value.right.id+"\n"
+                        var_type[var_name] = "number"
+                    elif var_type[value.left.id] == "string" and var_type[value.right.id] == "string":
+                        result += "data modify storage mclua:_data data.args.b set from storage mclua:_data data.var."+value.right.id+"\n"
+                        str_op = True
+                        var_type[var_name] = "string"
+                    else:
+                        raise ValueError("wrong var types (eg. number + string)")
                 else: raise ValueError("vartype not supported yet")
-                
-                if isinstance(value, ast.AddOp): result += "function mclua:lib/add\n"
+                if isinstance(value, ast.AddOp) and str_op: result += "function mclua:lib/combine_str with storage mclua:_data data.args\n"
+                elif isinstance(value, ast.AddOp): result += "function mclua:lib/add\n"
                 elif isinstance(value, ast.SubOp): result += "function mclua:lib/sub\n"
                 elif isinstance(value, ast.MultOp): result += "function mclua:lib/mul\n"
                 elif isinstance(value, ast.FloatDivOp): result += "function mclua:lib/div\n"
@@ -34,23 +109,22 @@ def compileLuaBlock(ast_tree: list, outfp: str):
                 else: raise NotImplementedError("op lib not supported yet")
                 
                 result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+            elif "Op" in value.display_name and isinstance(value.left, ast.String) and isinstance(value.right, ast.String):
+                result += 'function mclua:lib/combine_str {a:"'+value.left.s+'",b:"'+value.right.s+'"}'
+                result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+            elif isinstance(value, ast.Call):
+                call_block,ret_type = parse_func_call(value)
+                result += call_block
+                if ret_type != 'none':
+                    var_type[var_name] = ret_type
+                    result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+                else:
+                    var_type[var_name] = "number"
+                    result += "data modify storage mclua:_data data.var."+var_name+" set value 0d\n"
             else: raise ValueError("optype not supported yet")
         elif isinstance(line, ast.Call):
-            if line.func.id == "print":
-                if isinstance(line.args[0], ast.String):
-                    result += 'tellraw @a [{"text":"'+line.args[0].s+'"}]\n'
-                elif isinstance(line.args[0], ast.Number):
-                    result += 'tellraw @a [{"text":"'+str(line.args[0].n)+'"}]\n'
-                elif isinstance(line.args[0], ast.Name):
-                    result += 'tellraw @a [{"type":"nbt","nbt":"data.var.'+line.args[0].id+'","source":"storage","storage":"mclua:_data"}]\n'
-                else: raise ValueError("type not supported yet")
-            elif line.func.id == "command":
-                if isinstance(line.args[0], ast.String):
-                    result += line.args[0].s+"\n"
-                elif isinstance(line.args[0], ast.Name):
-                    result += "data modify storage mclua:_data data.exec.cmd set from storage mclua:_data data.var."+line.args[0].id+"\n"
-                    result += "function mclua:lib/execute with storage mclua:_data data.exec\n"
-                else: raise ValueError("type not supported yet")
+            call_block,_ = parse_func_call(line)
+            result += call_block
         elif isinstance(line, ast.If):
             result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
             if isinstance(line.test.left, ast.Number): result += "data modify storage mclua:_data data.args[0] set value "+str(line.test.left.n)+"d\n"
@@ -133,23 +207,59 @@ def compileLuaBlock(ast_tree: list, outfp: str):
             forBody = "data modify storage mclua:_data data.args set value [0d,0d]\n"
             var_name = line.target.id
             value = line.start
-            if isinstance(value, ast.Number): result += "data modify storage mclua:_data data.var."+var_name+" set value "+str(value.n)+"d\n"
-            elif isinstance(value, ast.String): result += "data modify storage mclua:_data data.var."+var_name+' set value "'+value.s+'"\n'
-            elif "Op" in value.display_name:
-                result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
-                if isinstance(value.left, ast.Number): result += "data modify storage mclua:_data data.args[0] set value "+str(value.left.n)+"d\n"
-                elif isinstance(value.left, ast.Name): result += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+value.left.id+"\n"
+            if isinstance(value, ast.Number):
+                var_type[var_name] = "number"
+                result += "data modify storage mclua:_data data.var."+var_name+" set value "+str(value.n)+"d\n"
+            elif isinstance(value, ast.String):
+                var_type[var_name] = "string"
+                result += "data modify storage mclua:_data data.var."+var_name+' set value "'+value.s+'"\n'
+            elif "Op" in value.display_name and not (isinstance(value.left, ast.String) and isinstance(value.right, ast.String)):
+                str_op = False
+                if isinstance(value.left, ast.Number):
+                    result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
+                    result += "data modify storage mclua:_data data.args[0] set value "+str(value.left.n)+"d\n"
+                elif isinstance(value.left, ast.Name):
+                    check_if_def(value.left.id)
+                    if var_type[value.left.id] == "number":
+                        result += "data modify storage mclua:_data data.args set value [0d,0d]\n"
+                        result += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+value.left.id+"\n"
+                    elif var_type[value.left.id] == "string":
+                        result += "data modify storage mclua:_data data.args set value {a:'',b:''}\n"
+                        result += "data modify storage mclua:_data data.args.a set from storage mclua:_data data.var."+value.left.id+"\n"
                 else: raise ValueError("vartype not supported yet")
                 if isinstance(value.right, ast.Number): result += "data modify storage mclua:_data data.args[1] set value "+str(value.right.n)+"d\n"
-                elif isinstance(value.right, ast.Name): result += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+value.right.id+"\n"
+                elif isinstance(value.right, ast.Name):
+                    check_if_def(value.right.id)
+                    if var_type[value.right.id] == "number":
+                        result += "data modify storage mclua:_data data.args[1] set from storage mclua:_data data.var."+value.right.id+"\n"
+                    elif var_type[value.left.id] == "string" and var_type[value.right.id] == "string":
+                        result += "data modify storage mclua:_data data.args.b set from storage mclua:_data data.var."+value.right.id+"\n"
+                        str_op = True
+                        var_type[var_name] = "string"
+                    else:
+                        raise ValueError("wrong var types (eg. number + string)")
                 else: raise ValueError("vartype not supported yet")
-                if isinstance(value, ast.AddOp): result += "function mclua:lib/add\n"
+                if isinstance(value, ast.AddOp) and str_op: result += "function mclua:lib/combine_str with storage mclua:_data data.args\n"
+                elif isinstance(value, ast.AddOp): result += "function mclua:lib/add\n"
                 elif isinstance(value, ast.SubOp): result += "function mclua:lib/sub\n"
                 elif isinstance(value, ast.MultOp): result += "function mclua:lib/mul\n"
                 elif isinstance(value, ast.FloatDivOp): result += "function mclua:lib/div\n"
                 elif isinstance(value, ast.ModOp): result += "function mclua:lib/mod\n"
                 else: raise NotImplementedError("op lib not supported yet")
+                
                 result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+            elif "Op" in value.display_name and isinstance(value.left, ast.String) and isinstance(value.right, ast.String):
+                result += 'function mclua:lib/combine_str {a:"'+value.left.s+'",b:"'+value.right.s+'"}'
+                result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+            elif isinstance(value, ast.Call):
+                call_block,ret_type = parse_func_call(value)
+                result += call_block
+                if ret_type != 'none':
+                    var_type[var_name] = ret_type
+                    result += "data modify storage mclua:_data data.var."+var_name+" set from storage mclua:_data data.return\n"
+                else:
+                    var_type[var_name] = "number"
+                    result += "data modify storage mclua:_data data.var."+var_name+" set value 0d\n"
             else: raise ValueError("optype not supported yet")
             forBody += "data modify storage mclua:_data data.args[0] set from storage mclua:_data data.var."+line.target.id+"\n"
             if isinstance(line.stop, ast.Number): forBody += "data modify storage mclua:_data data.args[1] set value "+str(line.stop.n)+"d\n"
@@ -173,13 +283,28 @@ def compileLuaBlock(ast_tree: list, outfp: str):
             with open(os.path.join(outfp,forProgName+".mcfunction"),"w",encoding="utf-8") as f:
                 f.write(forBody)
         elif isinstance(line, ast.Forin): raise NotImplementedError("for in repeat not supported in minecraft")
+        elif isinstance(line, ast.Return):
+            value = line.values[0]
+            if isinstance(value, ast.Number): result += "data modify storage mclua:_data data.return set value "+str(value.n)+"d\n"
+            elif isinstance(value, ast.String): result += 'data modify storage mclua:_data data.return set value "'+value.s+'"\n'
+            else: raise ValueError("return arg type not supported yet")
+        elif isinstance(line, ast.Function):
+            sub_args = {}
+            for arg in line.args:
+                arg_type = arg.id.split("__")[-1]
+                sub_args["__".join(arg.id.split("__")[:-1])] = arg_type
+            sub_args = {**var_type, **sub_args}
+            funcBody = compileLuaBlock(line.body.body,outfp,sub_args,sub_func=True)
+            funcPath = os.path.join(outfp,line.name.id+".mcfunction")
+            if os.path.exists(funcPath): raise Exception("func already defined at: %s"%funcPath)
+            with open(funcPath,"w",encoding="utf-8") as f:
+                f.write(funcBody)
         else: raise NotImplementedError("not supported yet")
     return result
 
 def compileLua(fn: str,ofp: str):
     src = openSrc(fn)
     ast_tree = ast.parse(src)
-    # temp hack
     ast_tree = ast_tree.body.body
     if not os.path.exists(ofp): os.mkdir(ofp)
     with open(os.path.join(ofp,"main.mcfunction"),"w",encoding="utf-8") as f:

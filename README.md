@@ -39,3 +39,26 @@ for i=0,3,1 do
 end
 print("mclua demo end")
 ```
+
+## installation
+
+on Linux/Mac OS:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python3 copmile.py <filename> <output path>
+```
+
+on Windows (PowerShell):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+python -m venv .venv
+.venv/bin/activate.ps1
+pip install -r requirements.txt
+
+python copmile.py <filename> <output path>
+```
